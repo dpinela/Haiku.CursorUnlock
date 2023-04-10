@@ -16,38 +16,37 @@ namespace Haiku.CursorUnlock
     {
         public void Start()
         {
-            Logger.LogInfo("GameManager.OnApplicationFocus");
             IL.GameManager.OnApplicationFocus += NoCursorManipulation;
-            Logger.LogInfo("MainMenuManager.DisableMouseAndSelectButton");
             var m = typeof(MainMenuManager)
                         .GetMethod("DisableMouseAndSelectButton", Reflection.BindingFlags.Instance | Reflection.BindingFlags.NonPublic)
                         .GetStateMachineTarget();
             new MMDetour.ILHook(m, NoCursorManipulation);
-            Logger.LogInfo("SkipToScene.OnEnable");
             IL.SkipToScene.OnEnable += NoCursorManipulation;
-            Logger.LogInfo("SkipToScene.OnDisable");
             IL.SkipToScene.OnDisable += NoCursorManipulation;
-            Logger.LogInfo("SkipToScene.OnDestroy");
             IL.SkipToScene.OnDestroy += NoCursorManipulation;
-            // debug mode also needs patching
             
+            // By the time we have the chance to hook it, the main menu code has already
+            // locked the cursor. Rectify that.
             UE.Cursor.visible = true;
             UE.Cursor.lockState = UE.CursorLockMode.None;
         }
 
         private void NoCursorManipulation(Cil.ILContext il)
         {
+            // The cursor lock is accomplished by setting Cursor.visible to `false`
+            // and Cursor.lockState to CursorLockMode.Locked.
+            // To prevent this, we override the arguments to the setters of those properties
+            // to be always `true` and CursorLockMode.None, respectively.
             var c = new Cil.ILCursor(il);
 
             while (c.TryGotoNext(
                 Cil.MoveType.AfterLabel,
                 i => i.MatchCall(typeof(UE.Cursor), "set_visible")))
             {
-                Logger.LogInfo("Paching call to set_visible");
                 c.Emit(MonoCil.OpCodes.Pop);
                 c.Emit(MonoCil.OpCodes.Ldc_I4, 1);
                 c.GotoNext(
-                    Cil.MoveType.AfterLabel,
+                    Cil.MoveType.After,
                     i => i.MatchCall(typeof(UE.Cursor), "set_visible"));
             }
 
@@ -57,11 +56,10 @@ namespace Haiku.CursorUnlock
                 Cil.MoveType.AfterLabel,
                 i => i.MatchCall(typeof(UE.Cursor), "set_lockState")))
             {
-                Logger.LogInfo("Paching call to set_lockState");
                 c.Emit(MonoCil.OpCodes.Pop);
                 c.Emit(MonoCil.OpCodes.Ldc_I4, (int)UE.CursorLockMode.None);
                 c.GotoNext(
-                    Cil.MoveType.AfterLabel,
+                    Cil.MoveType.After,
                     i => i.MatchCall(typeof(UE.Cursor), "set_lockState"));
             }
         }
@@ -81,30 +79,6 @@ namespace Haiku.CursorUnlock
                     Cil.MoveType.AfterLabel,
                     i => i.MatchCall(typeof(UE.Cursor), "set_lockState"));
             }
-        }
-
-        private void NoRosrucManipulation(Cil.ILContext il)
-        {
-            var c = new Cil.ILCursor(il);
-            while (c.TryGotoNext(
-                Cil.MoveType.AfterLabel,
-                i => i.MatchLdcI4(out var _),
-                i => i.MatchCall(typeof(UE.Cursor), "set_lockState"),
-                i => i.MatchLdcI4(out var _),
-                i => i.MatchCall(typeof(UE.Cursor), "set_visible")))
-            {
-                SkipNInstructions(c, 4);
-            }
-        }
-
-        private void SkipNInstructions(Cil.ILCursor c, int n)
-        {
-            Logger.LogInfo("Skipping cursor manip");
-            var skip = c.DefineLabel();
-            c.EmitDelegate((Action)(() => Logger.LogInfo("cursor manip skipped")));
-            c.Emit(MonoCil.OpCodes.Br, skip);
-            c.Index += n;
-            c.MarkLabel(skip);
         }
     }
 }
